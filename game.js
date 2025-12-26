@@ -164,19 +164,86 @@ function startGame(faction) {
     }
     
     // Inicializar unidades navales
-    const playerNaval = CONFIG.initialNavalUnits[faction].map((u, i) => ({
-        ...JSON.parse(JSON.stringify(u)),
-        x: 100 + (i * 90),
-        y: faction === 'argentina' ? 850 : 150,
-        owner: 'player'
-    }));
+    const playerNaval = CONFIG.initialNavalUnits[faction].map((u, i) => {
+        const ship = {
+            ...JSON.parse(JSON.stringify(u)),
+            x: 100 + (i * 90),
+            y: faction === 'argentina' ? 850 : 150,
+            owner: 'player',
+            moved: false
+        };
+        
+        // Inicializar portaviones con aviones
+        if (ship.isCarrier) {
+            ship.currentAircraft = [];
+            const aircraftTypes = CONFIG.carrierAircraft[faction];
+            
+            if (aircraftTypes && aircraftTypes.length > 0) {
+                const aircraftType = aircraftTypes[0];
+                const initialCount = Math.floor(ship.aircraftCapacity * 0.5); // 50% capacidad inicial
+                
+                for (let j = 0; j < initialCount; j++) {
+                    const aircraft = {
+                        ...JSON.parse(JSON.stringify(aircraftType)),
+                        id: `aircraft_${faction}_${i}_${j}`,
+                        assignedCarrier: ship.id,
+                        x: ship.x,
+                        y: ship.y,
+                        inFlight: false,
+                        missions: 0
+                    };
+                    ship.currentAircraft.push(aircraft);
+                }
+            }
+        }
+        
+        // Inicializar anfibios
+        if (ship.type === 'amphibious') {
+            ship.currentTroops = 0;
+        }
+        
+        return ship;
+    });
     
-    const enemyNaval = CONFIG.initialNavalUnits[gameState.enemyFaction].map((u, i) => ({
-        ...JSON.parse(JSON.stringify(u)),
-        x: 100 + (i * 90),
-        y: gameState.enemyFaction === 'argentina' ? 850 : 150,
-        owner: 'enemy'
-    }));
+    const enemyNaval = CONFIG.initialNavalUnits[gameState.enemyFaction].map((u, i) => {
+        const ship = {
+            ...JSON.parse(JSON.stringify(u)),
+            x: 100 + (i * 90),
+            y: gameState.enemyFaction === 'argentina' ? 850 : 150,
+            owner: 'enemy',
+            moved: false
+        };
+        
+        // Inicializar portaviones enemigos
+        if (ship.isCarrier) {
+            ship.currentAircraft = [];
+            const aircraftTypes = CONFIG.carrierAircraft[gameState.enemyFaction];
+            
+            if (aircraftTypes && aircraftTypes.length > 0) {
+                const aircraftType = aircraftTypes[0];
+                const initialCount = Math.floor(ship.aircraftCapacity * 0.5);
+                
+                for (let j = 0; j < initialCount; j++) {
+                    const aircraft = {
+                        ...JSON.parse(JSON.stringify(aircraftType)),
+                        id: `aircraft_${gameState.enemyFaction}_${i}_${j}`,
+                        assignedCarrier: ship.id,
+                        x: ship.x,
+                        y: ship.y,
+                        inFlight: false,
+                        missions: 0
+                    };
+                    ship.currentAircraft.push(aircraft);
+                }
+            }
+        }
+        
+        if (ship.type === 'amphibious') {
+            ship.currentTroops = 0;
+        }
+        
+        return ship;
+    });
     
     gameState.units.player.naval = playerNaval;
     gameState.units.enemy.naval = enemyNaval;
@@ -274,6 +341,16 @@ function drawMap() {
         unitType.units.forEach(unit => {
             drawGroundUnit(unit, 'enemy');
         });
+    });
+    
+    // Dibujar aviones en portaviones (pequeños indicadores)
+    [...gameState.units.player.naval, ...gameState.units.enemy.naval].forEach(ship => {
+        if (ship.isCarrier && ship.currentAircraft && ship.currentAircraft.length > 0) {
+            ctx.fillStyle = ship.owner === 'player' ? '#00aaff' : '#ff8800';
+            ctx.font = `bold ${10 / mapScale}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(`✈${ship.currentAircraft.length}`, ship.x, ship.y - 35 / mapScale);
+        }
     });
     
     ctx.restore();
@@ -419,8 +496,38 @@ function handleCanvasClick(e) {
     const mouseX = (e.clientX - rect.left - mapOffsetX) / mapScale;
     const mouseY = (e.clientY - rect.top - mapOffsetY) / mapScale;
     
+    // Si hay un avión seleccionado para misión, atacar
+    if (selectedAircraftForMission) {
+        // Verificar click en barco enemigo
+        for (let ship of gameState.units.enemy.naval) {
+            const dist = Math.hypot(mouseX - ship.x, mouseY - ship.y);
+            if (dist < 35) {
+                launchAirStrike(selectedAircraftForMission, ship.id, 'naval');
+                selectedAircraftForMission = null;
+                setMessage('');
+                return;
+            }
+        }
+        
+        // Verificar click en zona terrestre
+        for (let zone of gameState.zones) {
+            if (zone.type !== 'naval') {
+                const dist = Math.hypot(mouseX - zone.x, mouseY - zone.y);
+                if (dist < zone.radius) {
+                    launchAirStrike(selectedAircraftForMission, zone.id, 'ground');
+                    selectedAircraftForMission = null;
+                    setMessage('');
+                    return;
+                }
+            }
+        }
+        
+        addLog('❌ Click en un objetivo válido (barco o zona terrestre)');
+        return;
+    }
+    
     // Si hay una unidad seleccionada y es movible, intentar moverla
-    if (gameState.selectedUnit && gameState.selectedUnit.movable) {
+    if (gameState.selectedUnit && gameState.selectedUnit.movable && !gameState.selectedUnit.unit.moved) {
         moveSelectedUnit(mouseX, mouseY);
         return;
     }
@@ -456,6 +563,7 @@ function handleCanvasClick(e) {
     
     // Deseleccionar
     deselectAll();
+    selectedAircraftForMission = null;
 }
 
 function handleZoom(e) {
@@ -523,23 +631,98 @@ function showUnitPanel(unit, owner, type) {
     
     panel.style.display = 'block';
     
-    details.innerHTML = `
+    let detailsHTML = `
         <p><strong>${owner === 'player' ? '👤 Tu unidad' : '🤖 Unidad enemiga'}</strong></p>
         <p class="unit-name">${unit.name}</p>
         ${type === 'naval' ? `<p>HP: ${unit.hp}/${unit.maxHp}</p>` : ''}
         <p>Ataque: ${unit.attack}</p>
         <p>Defensa: ${unit.defense}</p>
         <p>Combustible/turno: ${unit.fuel || 'N/A'}</p>
+        ${unit.moved ? '<p style="color: #ffaa00;">⚠️ Ya movido este turno</p>' : ''}
     `;
+    
+    // Info adicional para portaviones
+    if (unit.isCarrier) {
+        detailsHTML += `
+            <hr style="margin: 10px 0; border-color: #444;">
+            <p><strong>✈️ PORTAVIONES</strong></p>
+            <p>Aviones: ${unit.currentAircraft ? unit.currentAircraft.length : 0}/${unit.aircraftCapacity}</p>
+        `;
+    }
+    
+    // Info adicional para anfibios
+    if (unit.type === 'amphibious') {
+        detailsHTML += `
+            <hr style="margin: 10px 0; border-color: #444;">
+            <p><strong>🚢 TRANSPORTE ANFIBIO</strong></p>
+            <p>Tropas: ${unit.currentTroops || 0}/${unit.troopCapacity}</p>
+        `;
+    }
+    
+    details.innerHTML = detailsHTML;
     
     actions.innerHTML = '';
     
-    if (owner === 'player' && unit.movable) {
-        actions.innerHTML = `
-            <p style="color: #ffa500; margin-top: 10px;">
-                ℹ️ Haz click en el mapa para mover esta unidad
-            </p>
-        `;
+    if (owner === 'player') {
+        let actionsHTML = '';
+        
+        // Movimiento
+        if (unit.movable && !unit.moved) {
+            actionsHTML += `
+                <p style="color: #ffa500; margin-top: 10px;">
+                    ℹ️ Haz click en el mapa para mover esta unidad
+                </p>
+            `;
+        }
+        
+        // Portaviones
+        if (unit.isCarrier) {
+            actionsHTML += `
+                <button onclick="spawnAircraftOnCarrier('${unit.id}')" style="width: 100%; margin-top: 10px;">
+                    ✈️ Desplegar Avión ($500)
+                </button>
+            `;
+            
+            if (unit.currentAircraft && unit.currentAircraft.length > 0) {
+                actionsHTML += `<div style="margin-top: 10px;"><strong>Aviones embarcados:</strong></div>`;
+                unit.currentAircraft.forEach(aircraft => {
+                    actionsHTML += `
+                        <div style="margin: 5px 0; padding: 5px; background: rgba(255,255,255,0.05); border-radius: 4px;">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span>${aircraft.name}</span>
+                                <span style="color: #00aaff;">Misiones: ${aircraft.missions}/${aircraft.maxMissions}</span>
+                            </div>
+                            ${aircraft.missions < aircraft.maxMissions ? `
+                                <button onclick="selectAircraftForMission('${aircraft.id}')" style="width: 100%; margin-top: 5px; padding: 5px; font-size: 0.85rem;">
+                                    🎯 Lanzar Misión
+                                </button>
+                            ` : '<p style="color: #888; font-size: 0.8rem;">Sin misiones disponibles</p>'}
+                        </div>
+                    `;
+                });
+            }
+        }
+        
+        // Anfibios
+        if (unit.type === 'amphibious') {
+            if (unit.currentTroops < unit.troopCapacity) {
+                actionsHTML += `
+                    <button onclick="loadTroopsOnShip('${unit.id}')" style="width: 100%; margin-top: 10px;">
+                        📦 Cargar Tropas
+                    </button>
+                `;
+            }
+            
+            if (unit.currentTroops > 0) {
+                actionsHTML += `
+                    <button onclick="executeAmphibiousLanding('${unit.id}')" style="width: 100%; margin-top: 10px; background: linear-gradient(145deg, #dc2626, #991b1b);">
+                        🏖️ DESEMBARCO ANFIBIO
+                    </button>
+                `;
+            }
+        }
+        
+        actions.innerHTML = actionsHTML;
     }
 }
 
@@ -582,24 +765,35 @@ function moveSelectedUnit(targetX, targetY) {
         return;
     }
     
+    // Verificar si ya se movió este turno
+    if (unit.moved) {
+        addLog('❌ Esta unidad ya se movió este turno');
+        return;
+    }
+    
     // Validar posición según tipo
     if (type === 'naval') {
-        // Los barcos no pueden entrar en tierra
         if (CONFIG.isLandPosition(targetX, targetY)) {
             addLog('❌ Los barcos no pueden navegar sobre tierra');
             return;
         }
     } else if (type === 'ground') {
-        // Las tropas solo pueden estar en tierra
         if (!CONFIG.isLandPosition(targetX, targetY)) {
             addLog('❌ Las tropas necesitan estar en tierra firme');
             return;
         }
     }
     
+    // Aplicar desgaste por movimiento
+    if (type === 'naval' && CONFIG.gameplay.attrition.naval > 0) {
+        unit.hp = Math.max(1, unit.hp - CONFIG.gameplay.attrition.naval);
+        addLog(`⚠️ Desgaste: ${unit.name} perdió ${CONFIG.gameplay.attrition.naval} HP`);
+    }
+    
     // Mover unidad
     unit.x = targetX;
     unit.y = targetY;
+    unit.moved = true;
     
     addLog(`✅ ${unit.name} movido a nueva posición`);
     deselectAll();
@@ -610,7 +804,6 @@ function deployTroops(zoneId) {
     const zone = gameState.zones.find(z => z.id === zoneId);
     if (!zone) return;
     
-    // Buscar unidades terrestres disponibles
     let totalAvailable = 0;
     gameState.units.player.ground.forEach(unitType => {
         totalAvailable += unitType.qty;
@@ -621,7 +814,6 @@ function deployTroops(zoneId) {
         return;
     }
     
-    // Desplegar una unidad aleatoria disponible
     for (let unitType of gameState.units.player.ground) {
         if (unitType.qty > 0) {
             const newUnit = {
@@ -629,18 +821,264 @@ function deployTroops(zoneId) {
                 x: zone.x + (Math.random() - 0.5) * 30,
                 y: zone.y + (Math.random() - 0.5) * 30,
                 symbol: unitType.symbol,
-                movable: true
+                movable: true,
+                moved: false
             };
             
             unitType.units.push(newUnit);
             unitType.qty--;
             zone.troops += unitType.manpower || 10;
             
+            // RESTAR MANPOWER
+            gameState.resources.player.manpower -= unitType.manpower || 10;
+            
             addLog(`✅ ${unitType.name} desplegado en ${zone.name}`);
             updateUI();
             return;
         }
     }
+}
+
+// ==================== OPERACIÓN ANFIBIA ====================
+function executeAmphibiousLanding(shipId) {
+    const ship = gameState.units.player.naval.find(s => s.id === shipId);
+    
+    if (!ship || ship.type !== 'amphibious') {
+        addLog('❌ Necesitas un transporte anfibio');
+        return;
+    }
+    
+    if (ship.currentTroops === 0) {
+        addLog('❌ El transporte está vacío. Carga tropas primero.');
+        return;
+    }
+    
+    // Encontrar zona de desembarco más cercana
+    let nearestZone = null;
+    let minDistance = Infinity;
+    
+    gameState.zones.forEach(zone => {
+        if (zone.isLandingZone || zone.type === 'bay') {
+            const dist = Math.hypot(ship.x - zone.x, ship.y - zone.y);
+            if (dist < minDistance) {
+                minDistance = dist;
+                nearestZone = zone;
+            }
+        }
+    });
+    
+    if (!nearestZone || minDistance > 100) {
+        addLog('❌ Demasiado lejos de una zona de desembarco');
+        return;
+    }
+    
+    // Ejecutar desembarco
+    const navalSupport = gameState.units.player.naval.filter(s => 
+        Math.hypot(s.x - nearestZone.x, s.y - nearestZone.y) < 200
+    );
+    
+    const defenders = gameState.zones.filter(z => 
+        z.controller === gameState.enemyFaction && 
+        Math.hypot(z.x - nearestZone.x, z.y - nearestZone.y) < 150
+    );
+    
+    const result = executeAmphibiousLanding(
+        { troops: ship.currentTroops },
+        navalSupport,
+        nearestZone,
+        defenders
+    );
+    
+    // Registrar bajas
+    const casualties = result.casualties;
+    gameState.losses.player += casualties;
+    
+    if (result.success) {
+        nearestZone.troops = result.troopsLanded;
+        nearestZone.controller = gameState.playerFaction;
+        ship.currentTroops = 0;
+        
+        addLog(`✅ Desembarco exitoso en ${nearestZone.name}`);
+        addLog(`💀 Bajas: ${casualties} soldados`);
+        addLog(`✓ Tropas desembarcadas: ${result.troopsLanded}`);
+        
+        if (result.navalLosses > 0) {
+            addLog(`⚠️ Perdiste ${result.navalLosses} barco(s) de apoyo`);
+            for (let i = 0; i < result.navalLosses && gameState.units.player.naval.length > 0; i++) {
+                gameState.units.player.naval.pop();
+            }
+        }
+    } else {
+        ship.currentTroops = Math.max(0, ship.currentTroops - casualties);
+        addLog(`❌ Desembarco fallido en ${nearestZone.name}`);
+        addLog(`💀 Bajas severas: ${casualties} soldados`);
+        
+        if (result.navalLosses > 0) {
+            addLog(`💥 Perdiste ${result.navalLosses} barco(s)`);
+        }
+    }
+    
+    updateTerritoryControl();
+    updateUI();
+}
+
+// ==================== CARGAR TROPAS EN TRANSPORTE ====================
+function loadTroopsOnShip(shipId) {
+    const ship = gameState.units.player.naval.find(s => s.id === shipId);
+    
+    if (!ship || ship.type !== 'amphibious') {
+        addLog('❌ Este barco no es un transporte anfibio');
+        return;
+    }
+    
+    // Buscar tropas anfibias disponibles
+    let troopsLoaded = 0;
+    
+    for (let unitType of gameState.units.player.ground) {
+        if (unitType.canAmphibious && unitType.qty > 0 && ship.currentTroops < ship.troopCapacity) {
+            const toLoad = Math.min(
+                unitType.qty * (unitType.manpower || 10),
+                ship.troopCapacity - ship.currentTroops
+            );
+            
+            ship.currentTroops += toLoad;
+            troopsLoaded += toLoad;
+            
+            const unitsUsed = Math.ceil(toLoad / (unitType.manpower || 10));
+            unitType.qty -= unitsUsed;
+            
+            // RESTAR MANPOWER
+            gameState.resources.player.manpower -= toLoad;
+            
+            if (ship.currentTroops >= ship.troopCapacity) break;
+        }
+    }
+    
+    if (troopsLoaded > 0) {
+        addLog(`✅ Cargadas ${troopsLoaded} tropas en ${ship.name}`);
+        updateUI();
+    } else {
+        addLog('❌ No tienes tropas anfibias disponibles');
+    }
+}
+
+// ==================== GESTIÓN DE PORTAVIONES ====================
+function spawnAircraftOnCarrier(carrierId) {
+    const carrier = gameState.units.player.naval.find(s => s.id === carrierId);
+    
+    if (!carrier || !carrier.isCarrier) {
+        addLog('❌ Este barco no es un portaviones');
+        return;
+    }
+    
+    if (carrier.currentAircraft.length >= carrier.aircraftCapacity) {
+        addLog('❌ El portaviones está a capacidad máxima');
+        return;
+    }
+    
+    // Spawnear aviones del tipo correspondiente
+    const aircraftTypes = CONFIG.carrierAircraft[gameState.playerFaction];
+    
+    if (!aircraftTypes || aircraftTypes.length === 0) {
+        addLog('❌ No hay aviones disponibles para este portaviones');
+        return;
+    }
+    
+    const aircraftType = aircraftTypes[0]; // Tomar el primer tipo
+    const cost = 500; // Costo de avión embarcado
+    
+    if (gameState.resources.player.money < cost) {
+        addLog('❌ Fondos insuficientes para desplegar avión');
+        return;
+    }
+    
+    const newAircraft = {
+        ...JSON.parse(JSON.stringify(aircraftType)),
+        id: `aircraft_${Date.now()}`,
+        assignedCarrier: carrierId,
+        x: carrier.x,
+        y: carrier.y,
+        inFlight: false
+    };
+    
+    carrier.currentAircraft.push(newAircraft);
+    gameState.resources.player.money -= cost;
+    
+    addLog(`✅ ${newAircraft.name} desplegado en ${carrier.name}`);
+    updateUI();
+}
+
+// ==================== MISIÓN AÉREA ====================
+function launchAirStrike(aircraftId, targetId, targetType) {
+    const carrier = gameState.units.player.naval.find(s => 
+        s.isCarrier && s.currentAircraft.some(a => a.id === aircraftId)
+    );
+    
+    if (!carrier) {
+        addLog('❌ Avión no encontrado en portaviones');
+        return;
+    }
+    
+    const aircraft = carrier.currentAircraft.find(a => a.id === aircraftId);
+    
+    if (!aircraft) return;
+    
+    if (aircraft.missions >= aircraft.maxMissions) {
+        addLog('❌ Este avión alcanzó su límite de misiones');
+        return;
+    }
+    
+    // Encontrar objetivo
+    let target = null;
+    
+    if (targetType === 'naval') {
+        target = gameState.units.enemy.naval.find(s => s.id === targetId);
+    } else if (targetType === 'ground') {
+        target = gameState.zones.find(z => z.id === targetId);
+    }
+    
+    if (!target) {
+        addLog('❌ Objetivo no encontrado');
+        return;
+    }
+    
+    // Ejecutar ataque aéreo
+    const result = executeAirStrike(aircraft, target, targetType);
+    
+    aircraft.missions++;
+    
+    // Registrar bajas si es ataque terrestre
+    if (targetType === 'ground' && result.hit) {
+        const casualtiesTroops = Math.floor(result.damage * 0.5);
+        target.troops = Math.max(0, target.troops - casualtiesTroops);
+        
+        if (target.controller === gameState.enemyFaction) {
+            gameState.losses.enemy += casualtiesTroops;
+        }
+        
+        addLog(`💀 Ataque causó ${casualtiesTroops} bajas en tierra`);
+    }
+    
+    if (result.hit) {
+        if (result.criticalHit) {
+            addLog(`💥 ¡IMPACTO CRÍTICO! ${aircraft.name} causó ${result.damage} de daño`);
+        } else {
+            addLog(`✅ ${aircraft.name} impactó causando ${result.damage} de daño`);
+        }
+    } else {
+        addLog(`❌ ${aircraft.name} falló el ataque`);
+    }
+    
+    if (result.aircraftLost) {
+        const index = carrier.currentAircraft.indexOf(aircraft);
+        carrier.currentAircraft.splice(index, 1);
+        gameState.losses.player++;
+        addLog(`💥 ${aircraft.name} fue derribado`);
+    } else {
+        addLog(`✓ ${aircraft.name} regresó al portaviones`);
+    }
+    
+    updateUI();
 }
 
 // ==================== ACTUALIZAR UI ====================
@@ -845,11 +1283,20 @@ function buyUnit(type, unitId) {
         return;
     }
     
+    // Verificar manpower para tropas terrestres
+    if (type === 'ground' && unit.manpower) {
+        if (gameState.resources.player.manpower < unit.manpower) {
+            addLog('❌ Manpower insuficiente');
+            return;
+        }
+    }
+    
     gameState.resources.player.money -= unit.cost;
     
     if (type === 'ground') {
         const playerUnit = gameState.units.player.ground.find(u => u.id === unitId);
         playerUnit.qty++;
+        // NO restamos manpower aquí, se resta al desplegar
     } else if (type === 'air') {
         const playerUnit = gameState.units.player.air.find(u => u.id === unitId);
         playerUnit.qty++;
@@ -859,14 +1306,30 @@ function buyUnit(type, unitId) {
             x: 150 + gameState.units.player.naval.length * 80,
             y: gameState.playerFaction === 'argentina' ? 850 : 150,
             owner: 'player',
-            id: unit.id + '_' + Date.now()
+            id: unit.id + '_' + Date.now(),
+            moved: false
         };
+        
+        // Inicializar anfibios
+        if (newShip.type === 'amphibious') {
+            newShip.currentTroops = 0;
+        }
+        
         gameState.units.player.naval.push(newShip);
     }
     
     addLog(`✅ Comprado: ${unit.name}`);
     updateUI();
     populateShop();
+}
+
+// ==================== SELECCIONAR AVIÓN PARA MISIÓN ====================
+let selectedAircraftForMission = null;
+
+function selectAircraftForMission(aircraftId) {
+    selectedAircraftForMission = aircraftId;
+    addLog('🎯 Selecciona un objetivo en el mapa (barco enemigo o zona terrestre)');
+    setMessage('🎯 Click en un objetivo para lanzar ataque aéreo');
 }
 
 // ==================== FIN DE TURNO ====================
@@ -876,6 +1339,26 @@ function endTurn() {
     gameState.resources.player.money -= costs.money;
     gameState.resources.player.fuel -= costs.fuel;
     gameState.resources.player.logistics -= costs.logistics;
+    
+    // Resetear flags de movimiento de todas las unidades del jugador
+    gameState.units.player.naval.forEach(ship => {
+        ship.moved = false;
+    });
+    
+    gameState.units.player.ground.forEach(unitType => {
+        unitType.units.forEach(unit => {
+            unit.moved = false;
+        });
+    });
+    
+    // Resetear misiones de aviones
+    gameState.units.player.naval.forEach(carrier => {
+        if (carrier.isCarrier && carrier.currentAircraft) {
+            carrier.currentAircraft.forEach(aircraft => {
+                aircraft.missions = 0;
+            });
+        }
+    });
     
     // Actualizar turno
     gameState.turn++;
