@@ -13,12 +13,14 @@ function executeCombat(attacker, defender, combatType) {
         attackerDamaged: 0,
         defenderDestroyed: false,
         attackerDestroyed: false,
-        critical: false
+        critical: false,
+        attackerCasualties: 0,
+        defenderCasualties: 0
     };
     
     // Calcular daño base con variación
-    let attackPower = attacker.attack * (0.8 + Math.random() * 0.4); // 80% - 120%
-    let defensePower = defender.defense * (0.85 + Math.random() * 0.3); // 85% - 115%
+    let attackPower = attacker.attack * (0.8 + Math.random() * 0.4);
+    let defensePower = defender.defense * (0.85 + Math.random() * 0.3);
     
     // Crítico (15% de probabilidad)
     if (Math.random() < 0.15) {
@@ -32,12 +34,14 @@ function executeCombat(attacker, defender, combatType) {
     result.damage = finalDamage;
     
     // Aplicar daño al defensor
-    defender.hp = Math.max(0, defender.hp - finalDamage);
-    
-    // Verificar si el defensor fue destruido
-    if (defender.hp <= 0) {
-        result.defenderDestroyed = true;
-        return result;
+    if (defender.hp !== undefined) {
+        defender.hp = Math.max(0, defender.hp - finalDamage);
+        
+        if (defender.hp <= 0) {
+            result.defenderDestroyed = true;
+            result.defenderCasualties = 1; // 1 unidad destruida
+            return result;
+        }
     }
     
     // Contraataque (70% de probabilidad si el defensor sobrevive)
@@ -46,10 +50,13 @@ function executeCombat(attacker, defender, combatType) {
         const counterDamage = Math.floor(counterPower);
         result.attackerDamaged = Math.max(5, counterDamage);
         
-        attacker.hp = Math.max(0, attacker.hp - result.attackerDamaged);
-        
-        if (attacker.hp <= 0) {
-            result.attackerDestroyed = true;
+        if (attacker.hp !== undefined) {
+            attacker.hp = Math.max(0, attacker.hp - result.attackerDamaged);
+            
+            if (attacker.hp <= 0) {
+                result.attackerDestroyed = true;
+                result.attackerCasualties = 1;
+            }
         }
     }
     
@@ -66,6 +73,8 @@ function executeNavalBattle(fleet1, fleet2) {
     const result = {
         fleet1Losses: [],
         fleet2Losses: [],
+        fleet1Casualties: 0,
+        fleet2Casualties: 0,
         winner: null,
         rounds: 0
     };
@@ -84,12 +93,14 @@ function executeNavalBattle(fleet1, fleet2) {
                 const index = fleet2.indexOf(target);
                 fleet2.splice(index, 1);
                 result.fleet2Losses.push(target.name);
+                result.fleet2Casualties++;
             }
             
             if (combatResult.attackerDestroyed) {
                 const index = fleet1.indexOf(attacker);
                 fleet1.splice(index, 1);
                 result.fleet1Losses.push(attacker.name);
+                result.fleet1Casualties++;
             }
         }
         
@@ -104,12 +115,14 @@ function executeNavalBattle(fleet1, fleet2) {
                 const index = fleet1.indexOf(target);
                 fleet1.splice(index, 1);
                 result.fleet1Losses.push(target.name);
+                result.fleet1Casualties++;
             }
             
             if (combatResult.attackerDestroyed) {
                 const index = fleet2.indexOf(attacker);
                 fleet2.splice(index, 1);
                 result.fleet2Losses.push(attacker.name);
+                result.fleet2Casualties++;
             }
         }
         
@@ -140,7 +153,8 @@ function executeAirStrike(aircraft, target, targetType) {
         hit: false,
         damage: 0,
         aircraftLost: false,
-        criticalHit: false
+        criticalHit: false,
+        casualties: 0
     };
     
     // Probabilidad de impacto según tipo de objetivo
@@ -148,13 +162,13 @@ function executeAirStrike(aircraft, target, targetType) {
     
     switch(targetType) {
         case 'naval':
-            baseAccuracy = 0.55; // Barcos son objetivos difíciles
+            baseAccuracy = 0.55;
             break;
         case 'ground':
-            baseAccuracy = 0.75; // Objetivos terrestres más fáciles
+            baseAccuracy = 0.75;
             break;
         case 'air':
-            baseAccuracy = 0.45; // Combate aéreo es el más difícil
+            baseAccuracy = 0.45;
             break;
     }
     
@@ -174,18 +188,27 @@ function executeAirStrike(aircraft, target, targetType) {
             result.damage = Math.floor(aircraft.attack * (0.7 + Math.random() * 0.6));
         }
         
-        target.hp = Math.max(0, target.hp - result.damage);
+        // Aplicar daño
+        if (target.hp !== undefined) {
+            target.hp = Math.max(0, target.hp - result.damage);
+        }
+        
+        // Calcular bajas para ataques terrestres
+        if (targetType === 'ground' && target.troops) {
+            result.casualties = Math.floor(result.damage * 0.5);
+        }
     }
     
-    // Probabilidad de perder el avión (fuego antiaéreo, interceptores)
+    // Probabilidad de perder el avión
     let lossChance = 0.15;
     
-    if (targetType === 'naval') lossChance = 0.25; // Barcos tienen AA
-    if (targetType === 'air') lossChance = 0.35; // Combate aéreo es peligroso
-    if (target.antiAir) lossChance += (target.antiAir / 200); // Bonus de AA
+    if (targetType === 'naval') lossChance = 0.25;
+    if (targetType === 'air') lossChance = 0.35;
+    if (target.antiAir) lossChance += (target.antiAir / 200);
     
     if (Math.random() < lossChance) {
         result.aircraftLost = true;
+        result.casualties++;
     }
     
     return result;
@@ -220,11 +243,11 @@ function executeGroundCombat(attackerUnits, defenderUnits, zone) {
     
     // Modificadores de terreno
     const terrainModifiers = {
-        mountain: 1.6,    // Gran ventaja defensiva
-        town: 1.3,        // Ventaja defensiva moderada
-        capital: 1.5,     // Fortaleza bien defendida
-        plains: 1.0,      // Sin modificador
-        bay: 0.9          // Ligeramente más difícil de defender
+        mountain: 1.6,
+        town: 1.3,
+        capital: 1.5,
+        plains: 1.0,
+        bay: 0.9
     };
     
     const terrainMod = terrainModifiers[zone.type] || 1.0;
@@ -235,7 +258,7 @@ function executeGroundCombat(attackerUnits, defenderUnits, zone) {
     const attackerRatio = attackerStrength / totalStrength;
     const defenderRatio = defenderStrength / totalStrength;
     
-    // Calcular bajas
+    // Calcular bajas (en hombres, no unidades)
     const baseAttackerLoss = attackerStrength * 0.25;
     const baseDefenderLoss = defenderStrength * 0.25;
     
@@ -283,17 +306,17 @@ function executeAmphibiousLanding(landingForce, navalSupport, zone, defenders) {
     
     // Modificador del tipo de zona
     const zoneModifiers = {
-        bay: 0.25,      // Bahías son ideales
-        plains: 0.1,    // Planicies aceptables
-        town: -0.1,     // Pueblos difíciles
-        mountain: -0.25, // Costas montañosas muy difíciles
-        capital: -0.3   // Capitales fuertemente defendidas
+        bay: 0.25,
+        plains: 0.1,
+        town: -0.1,
+        mountain: -0.25,
+        capital: -0.3
     };
     
     successChance += (zoneModifiers[zone.type] || 0);
     
     // Resistencia de los defensores
-    const defenseStrength = defenders.reduce((sum, d) => sum + d.defense, 0);
+    const defenseStrength = defenders.reduce((sum, d) => sum + (d.troops || 0), 0);
     const defenseReduction = Math.min(0.4, defenseStrength / 500);
     successChance -= defenseReduction;
     
@@ -329,7 +352,7 @@ function executeAmphibiousLanding(landingForce, navalSupport, zone, defenders) {
 }
 
 /**
- * Calcular modificadores de combate basados en condiciones
+ * Calcular modificadores de combate
  * @param {Object} conditions - Condiciones del combate
  * @returns {Object} Modificadores aplicables
  */
@@ -340,7 +363,6 @@ function calculateCombatModifiers(conditions) {
         accuracyBonus: 1.0
     };
     
-    // Clima
     if (conditions.weather) {
         switch(conditions.weather) {
             case 'storm':
@@ -356,7 +378,6 @@ function calculateCombatModifiers(conditions) {
         }
     }
     
-    // Moral
     if (conditions.morale) {
         if (conditions.morale > 80) {
             modifiers.attackBonus *= 1.25;
@@ -371,7 +392,6 @@ function calculateCombatModifiers(conditions) {
         }
     }
     
-    // Logística
     if (conditions.logistics) {
         if (conditions.logistics < 40) {
             modifiers.attackBonus *= 0.8;
@@ -381,7 +401,6 @@ function calculateCombatModifiers(conditions) {
         }
     }
     
-    // Apoyo aéreo
     if (conditions.airSupport) {
         const airBonus = Math.min(0.3, conditions.airSupport / 100);
         modifiers.attackBonus *= (1 + airBonus);
@@ -391,7 +410,7 @@ function calculateCombatModifiers(conditions) {
 }
 
 /**
- * Simular superioridad aérea
+ * Calcular superioridad aérea
  * @param {number} friendlyAircraft - Número de aviones amigos
  * @param {number} enemyAircraft - Número de aviones enemigos
  * @returns {Object} Estado de superioridad aérea
@@ -447,44 +466,6 @@ function calculateAirSuperiority(friendlyAircraft, enemyAircraft) {
             result.bonus = -0.25;
             result.description = 'Superioridad aérea enemiga mayor';
         }
-    }
-    
-    return result;
-}
-
-/**
- * Calcular daño de artillería
- * @param {Object} artillery - Unidad de artillería
- * @param {Object} target - Objetivo
- * @param {number} distance - Distancia al objetivo
- * @returns {Object} Resultado del bombardeo
- */
-function executeArtilleryStrike(artillery, target, distance) {
-    const result = {
-        hit: false,
-        damage: 0,
-        suppression: 0
-    };
-    
-    // Verificar alcance
-    const maxRange = CONFIG.gameplay.attackRange.artillery || 150;
-    if (distance > maxRange) {
-        return result; // Fuera de alcance
-    }
-    
-    // Precisión disminuye con la distancia
-    const baseAccuracy = 0.7;
-    const rangeModifier = 1 - (distance / maxRange) * 0.4;
-    const finalAccuracy = baseAccuracy * rangeModifier;
-    
-    if (Math.random() < finalAccuracy) {
-        result.hit = true;
-        result.damage = Math.floor(artillery.attack * 0.8 * (0.8 + Math.random() * 0.4));
-        
-        // La artillería también suprime (reduce efectividad temporalmente)
-        result.suppression = Math.floor(result.damage * 0.5);
-        
-        target.hp = Math.max(0, target.hp - result.damage);
     }
     
     return result;
