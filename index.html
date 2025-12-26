@@ -3,158 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guerra de Malvinas 1982 - Juego de Estrategia</title>
+    <title>Operación Rosario 1982 - Estrategia Militar</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- PANTALLA DE MENU -->
+    <div id="loading-screen">
+        <div class="loader-content">
+            <h1>SISTEMA DE COMANDO TÁCTICO</h1>
+            <p>Cargando cartografía y despliegue de unidades...</p>
+            <div class="progress-bar"><div id="progress-fill"></div></div>
+        </div>
+    </div>
+
     <div id="menu-screen">
-        <h1>⚔️ GUERRA DE MALVINAS</h1>
-        <p>1982 - Conflicto del Atlántico Sur</p>
-        <div class="faction-buttons">
-            <button class="faction-btn argentina" onclick="startGame('argentina')">
-                🇦🇷 ARGENTINA
-            </button>
-            <button class="faction-btn uk" onclick="startGame('uk')">
-                🇬🇧 REINO UNIDO
-            </button>
-        </div>
-        <div class="menu-info">
-            <p>Juego de estrategia histórica por turnos</p>
-            <p>Gestiona recursos • Compra unidades • Conquista territorios</p>
+        <div class="menu-overlay">
+            <h1>⚔️ MALVINAS 1982</h1>
+            <p class="subtitle">SIMULADOR DE CONFLICTO DEL ATLÁNTICO SUR</p>
+            <div class="faction-selection">
+                <button class="faction-btn arg" onclick="startGame('argentina')">🇦🇷 ARGENTINA</button>
+                <button class="faction-btn uk" onclick="startGame('uk')">🇬🇧 REINO UNIDO</button>
+            </div>
         </div>
     </div>
 
-    <!-- PANTALLA DE JUEGO -->
-    <div id="game-screen">
-        <!-- HUD SUPERIOR -->
-        <div id="hud">
-            <div class="resources">
-                <div class="resource-item">
-                    <span class="resource-icon">💰</span>
-                    <span id="res-money">5000</span>
-                </div>
-                <div class="resource-item">
-                    <span class="resource-icon">👥</span>
-                    <span id="res-manpower">10000</span>
-                </div>
-                <div class="resource-item">
-                    <span class="resource-icon">⛽</span>
-                    <span id="res-fuel">8000</span>
-                </div>
-                <div class="resource-item">
-                    <span class="resource-icon">📦</span>
-                    <span id="res-logistics">100</span>%
-                </div>
-                <div class="resource-item">
-                    <span class="resource-icon">📊</span>
-                    <span id="res-political">75</span>%
-                </div>
-                <div class="resource-item">
-                    <span class="resource-icon">🌍</span>
-                    <span id="res-international">50</span>%
-                </div>
-            </div>
+    <div id="game-screen" class="hidden">
+        <div id="hud-top">
+            <div class="res-box">💰 <span id="res-money">0</span></div>
+            <div class="res-box">⛽ <span id="res-fuel">0</span></div>
+            <div class="res-box">📅 TURNO: <span id="turn-count">1</span></div>
+            <button id="end-turn-btn" onclick="nextTurn()">FINALIZAR TURNO</button>
+        </div>
+
+        <div id="map-container">
+            <canvas id="map-canvas"></canvas>
             
-            <div class="controls">
-                <span class="turn-display">TURNO <span id="turn-number">1</span></span>
-                <button class="btn-shop" onclick="toggleShop()">🛒 COMPRAR</button>
-                <button class="btn-end-turn" id="end-turn-btn" onclick="endTurn()">
-                    FINALIZAR TURNO →
-                </button>
-            </div>
-        </div>
-
-        <!-- MENSAJE DE ESTADO -->
-        <div id="status-message">Selecciona tu facción para comenzar</div>
-
-        <!-- CONTENEDOR PRINCIPAL -->
-        <div id="main-container">
-            <!-- MAPA -->
-            <div id="map-container">
-                <canvas id="map-canvas"></canvas>
-            </div>
-
-            <!-- PANEL LATERAL -->
-            <div id="side-panel">
-                <!-- INFO DE UNIDAD SELECCIONADA -->
-                <div id="unit-info" class="panel-section" style="display: none;">
-                    <h3 class="panel-title">📋 Unidad Seleccionada</h3>
-                    <div id="unit-details"></div>
-                </div>
-
-                <!-- INFO DE ZONA SELECCIONADA -->
-                <div id="zone-info" class="panel-section" style="display: none;">
-                    <h3 class="panel-title">📍 Zona</h3>
-                    <div id="zone-details"></div>
-                </div>
-
-                <!-- LOG DE COMBATE -->
-                <div id="combat-log" class="panel-section">
-                    <h3 class="panel-title">📜 Log de Eventos</h3>
-                    <div id="log-content"></div>
-                </div>
-
-                <!-- FLOTA DEL JUGADOR -->
-                <div id="fleet-info" class="panel-section">
-                    <h3 class="panel-title">⚓ Tu Flota</h3>
-                    <div id="fleet-list"></div>
-                </div>
-
-                <!-- EJERCITO DEL JUGADOR -->
-                <div id="army-info" class="panel-section">
-                    <h3 class="panel-title">🪖 Tu Ejército</h3>
-                    <div id="army-list"></div>
+            <div id="unit-panel" class="side-panel hidden">
+                <h3 id="u-name">Unidad</h3>
+                <div class="stat">Salud: <div class="bar"><div id="u-hp"></div></div></div>
+                <div class="stat">Condición: <div class="bar"><div id="u-fatigue"></div></div></div>
+                <p>Combustible: <span id="u-fuel">0</span></p>
+                <div class="actions">
+                    <button id="btn-move-mode" onclick="toggleMoveMode()">MOVER (M)</button>
+                    <button id="btn-attack-mode" onclick="toggleAttackMode()">ATACAR (A)</button>
                 </div>
             </div>
         </div>
+
+        <div id="combat-log"></div>
     </div>
 
-    <!-- MODAL DE TIENDA -->
-    <div id="shop-modal" class="modal">
+    <div id="victory-modal" class="modal hidden">
         <div class="modal-content">
-            <div class="modal-header">
-                <h2>🛒 COMPRAR UNIDADES</h2>
-                <button class="close-btn" onclick="toggleShop()">✕</button>
-            </div>
-            
-            <div class="modal-body">
-                <!-- UNIDADES TERRESTRES -->
-                <div class="shop-category">
-                    <h3>🪖 Unidades Terrestres</h3>
-                    <div id="shop-ground" class="shop-grid"></div>
-                </div>
-
-                <!-- UNIDADES AEREAS -->
-                <div class="shop-category">
-                    <h3>✈️ Unidades Aéreas</h3>
-                    <div id="shop-air" class="shop-grid"></div>
-                </div>
-
-                <!-- UNIDADES NAVALES -->
-                <div class="shop-category">
-                    <h3>⚓ Unidades Navales (Refuerzos)</h3>
-                    <div id="shop-naval" class="shop-grid"></div>
-                </div>
-            </div>
+            <h1 id="victory-title">OPERACIÓN FINALIZADA</h1>
+            <p id="victory-msg"></p>
+            <button onclick="location.reload()">REINTENTAR</button>
         </div>
     </div>
 
-    <!-- MODAL DE VICTORIA/DERROTA -->
-    <div id="end-game-modal" class="modal">
-        <div class="modal-content">
-            <div class="end-game-content">
-                <h1 id="end-game-title"></h1>
-                <p id="end-game-message"></p>
-                <p id="end-game-turns"></p>
-                <button class="btn-restart" onclick="location.reload()">
-                    🔄 JUGAR DE NUEVO
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- SCRIPTS -->
     <script src="config.js"></script>
     <script src="combat.js"></script>
     <script src="ai.js"></script>
